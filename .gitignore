@@ -1,0 +1,96 @@
+### Ansible
+# Ansible retry files
+.ansible/ 
+*.retry
+# Vault password files
+*.vault_pass
+
+### Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+# Crash log when Terraform panics
+crash.log
+override.tf
+override.tf.json
+*.tfvars
+*.tfvars.json
+.terraform.lock.hcl
+
+### Go
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, build output
+*.test
+_testmain.go
+
+# Output of the go coverage tool
+coverage.out
+
+# Dependency directories (remove the comment if you use modules)
+vendor/
+
+### Common / OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.swp
+*.swo
+
+### IDEs / Editors
+.vscode/
+.idea/
+*.iml
+
+### Python / Virtualenvs (common)
+venv/
+env/
+.venv/
+ENV/
+
+### Logs and runtime files
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+### Environment / secrets
+.env
+.env.*
+secrets.yml
+*.pem
+*.key
+
+### Node
+node_modules/
+
+### Build / packaging
+dist/
+build/
+/*.egg-info/
+
+### Editor backups
+*~
+
+# macOS Finder attributes
+.AppleDouble
+._*
+
+# Coverage and caches
+.pytest_cache/
+.coverage
+.cache
+coverage/
+.mypy_cache/
+
+# JetBrains
+.idea/
+
+# Local terraform override files
+*.override.tf
