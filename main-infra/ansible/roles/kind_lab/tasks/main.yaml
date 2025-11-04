@@ -128,6 +128,14 @@
         # ----------------------------------------------------------
         # TRAEFIK
         # ----------------------------------------------------------
+        - name: Ensure Python packages required by kubernetes/helm modules are installed
+          ansible.builtin.pip:
+            name:
+              - pyyaml
+              - kubernetes
+            state: present
+          changed_when: false
+
         - name: Add Traefik Helm repo
           community.kubernetes.helm_repository:
             name: traefik
