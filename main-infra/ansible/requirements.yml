@@ -1,0 +1,6 @@
+---
+# Ansible collection dependencies for this project
+collections:
+  - name: community.kubernetes
+    # optional: pin a version to ensure reproducible runs
+    # version: "2.9.0"
