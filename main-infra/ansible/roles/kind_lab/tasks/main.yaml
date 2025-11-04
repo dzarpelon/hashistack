@@ -128,12 +128,12 @@
         # ----------------------------------------------------------
         # TRAEFIK
         # ----------------------------------------------------------
-        - name: Ensure Python packages required by kubernetes/helm modules are installed
-          ansible.builtin.pip:
-            name:
-              - pyyaml
-              - kubernetes
-            state: present
+        - name: Ensure pip tooling (packaging) is available in Ansible Python
+          ansible.builtin.command: "{{ ansible_python.executable }} -m pip install --upgrade pip packaging"
+          changed_when: false
+
+        - name: Install PyYAML and kubernetes python client into Ansible Python
+          ansible.builtin.command: "{{ ansible_python.executable }} -m pip install pyyaml kubernetes"
           changed_when: false
 
         - name: Add Traefik Helm repo
