@@ -140,6 +140,10 @@
           community.kubernetes.helm_repository:
             name: traefik
             repo_url: https://helm.traefik.io/traefik
+            force_update: true
+          register: kind_lab_traefik_repo
+          failed_when: false
+          changed_when: "kind_lab_traefik_repo is defined and (kind_lab_traefik_repo.changed or 'added' in (kind_lab_traefik_repo.stdout|default('')) or 'updated' in (kind_lab_traefik_repo.stdout|default('')))"
 
         - name: Install Traefik ingress controller
           community.kubernetes.helm:
