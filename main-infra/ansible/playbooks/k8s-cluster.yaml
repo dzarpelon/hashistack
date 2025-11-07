@@ -37,3 +37,14 @@
       ansible.builtin.include_role:
         name: k8s_worker
       when: k8s_state | default('present') == 'present'
+
+- name: Install Kubernetes add-ons
+  hosts: k8s_master
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install cluster add-ons
+      ansible.builtin.include_role:
+        name: k8s_addons
+      when: k8s_state | default('present') == 'present'
