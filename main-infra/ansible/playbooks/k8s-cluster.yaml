@@ -15,6 +15,21 @@
         name: k8s_common
       when: k8s_state | default('present') == 'present'
 
+    - name: Ensure python3-pip is installed on all nodes
+      ansible.builtin.package:
+        name: python3-pip
+        state: present
+      when: k8s_state | default('present') == 'present'
+
+    - name: Install kubernetes python client via pip3 on all nodes
+      ansible.builtin.pip:
+        name: kubernetes
+        state: present
+        executable: pip3
+      environment:
+        PATH: "/usr/local/bin:{{ ansible_env.PATH | default('/usr/bin:/bin') }}"
+      when: k8s_state | default('present') == 'present'
+
 - name: Initialize Kubernetes master node
   hosts: k8s_master
   become: true
@@ -48,3 +63,61 @@
       ansible.builtin.include_role:
         name: k8s_addons
       when: k8s_state | default('present') == 'present'
+
+    - name: Deploy Longhorn storage system
+      ansible.builtin.include_role:
+        name: k8s_longhorn
+      when: k8s_state | default('present') == 'present'
+
+    - name: Deploy DNS infrastructure
+      ansible.builtin.include_role:
+        name: k8s_dns
+      when: k8s_state | default('present') == 'present'
+
+    - name: Deploy Traefik Ingress Controller
+      ansible.builtin.include_role:
+        name: k8s_traefik
+      when: k8s_state | default('present') == 'present'
+
+- name: Configure DNS resolution on all nodes
+  hosts: k8s
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Install dnsmasq package
+      ansible.builtin.package:
+        name: dnsmasq
+        state: present
+      when: k8s_state | default('present') == 'present'
+
+    - name: Configure NetworkManager DNS for lab.dzarpelon.com domain
+      ansible.builtin.copy:
+        content: |
+          [main]
+          dns=dnsmasq
+        dest: /etc/NetworkManager/conf.d/dns.conf
+        mode: "0644"
+      when: k8s_state | default('present') == 'present'
+
+    - name: Create dnsmasq configuration directory
+      ansible.builtin.file:
+        path: /etc/NetworkManager/dnsmasq.d
+        state: directory
+        mode: "0755"
+      when: k8s_state | default('present') == 'present'
+
+    - name: Configure dnsmasq to forward lab.dzarpelon.com queries to custom DNS
+      ansible.builtin.copy:
+        content: |
+          server=/lab.dzarpelon.com/192.168.100.101#30053
+        dest: /etc/NetworkManager/dnsmasq.d/lab-dns.conf
+        mode: "0644"
+      when: k8s_state | default('present') == 'present'
+      notify: restart NetworkManager
+
+  handlers:
+    - name: restart NetworkManager
+      ansible.builtin.systemd:
+        name: NetworkManager
+        state: restarted

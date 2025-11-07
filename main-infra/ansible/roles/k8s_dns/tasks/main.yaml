@@ -1,0 +1,80 @@
+---
+# Deploy DNS infrastructure
+
+- name: Create DNS namespace
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ playbook_dir }}/../../manifests/dns/namespace.yaml"
+  delegate_to: localhost
+  become: false
+
+- name: Deploy etcd cluster
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ playbook_dir }}/../../manifests/dns/etcd.yaml"
+  delegate_to: localhost
+  become: false
+
+- name: Wait for etcd
+  kubernetes.core.k8s_info:
+    kind: StatefulSet
+    name: etcd
+    namespace: dns-system
+  register: k8s_dns_etcd_status
+  until: k8s_dns_etcd_status.resources[0].status.readyReplicas | default(0) == 3
+  retries: 30
+  delay: 10
+
+- name: Deploy CoreDNS
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ playbook_dir }}/../../manifests/dns/coredns.yaml"
+  delegate_to: localhost
+  become: false
+
+- name: Wait for CoreDNS
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    name: coredns-custom
+    namespace: dns-system
+  register: k8s_dns_coredns_status
+  until: k8s_dns_coredns_status.resources[0].status.readyReplicas | default(0) == 2
+  retries: 20
+  delay: 10
+
+- name: Deploy External DNS
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ playbook_dir }}/../../manifests/dns/external-dns.yaml"
+  delegate_to: localhost
+  become: false
+
+- name: Wait for External DNS
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    name: external-dns
+    namespace: dns-system
+  register: k8s_dns_externaldns_status
+  until: k8s_dns_externaldns_status.resources[0].status.readyReplicas | default(0) == 1
+  retries: 15
+  delay: 10
+
+- name: Configure DNS resolver on Mac (controller)
+  ansible.builtin.copy:
+    content: |
+      nameserver 192.168.100.101
+      port 30053
+    dest: /etc/resolver/lab.dzarpelon.com
+    mode: "0644"
+  delegate_to: localhost
+  become: true
+  when: ansible_facts['os_family'] == 'Darwin' or ansible_system == 'Darwin'
+  ignore_errors: true
+
+- name: Display DNS status
+  ansible.builtin.debug:
+    msg:
+      - "DNS Infrastructure deployed!"
+      - "DNS Server: k8s-master:30053 (192.168.100.101:30053)"
+      - "Mac DNS resolver configured for lab.dzarpelon.com domain"
+      - "VMs DNS resolver configured for lab.dzarpelon.com domain"

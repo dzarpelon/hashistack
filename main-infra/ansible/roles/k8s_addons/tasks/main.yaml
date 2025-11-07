@@ -35,7 +35,7 @@
             addresses:
             - 192.168.100.150-192.168.100.250
         dest: /tmp/metallb-ippool.yaml
-        mode: '0644'
+        mode: "0644"
 
     - name: Create MetalLB L2Advertisement configuration
       ansible.builtin.copy:
@@ -49,7 +49,7 @@
             ipAddressPools:
             - homelab-pool
         dest: /tmp/metallb-l2.yaml
-        mode: '0644'
+        mode: "0644"
 
     - name: Apply MetalLB IP address pool
       ansible.builtin.shell: |
@@ -73,6 +73,6 @@
           MetalLB has been installed successfully!
           IP Address Pool: 192.168.100.150-192.168.100.250
           Mode: Layer 2
-          
+
           You can now create LoadBalancer services and they will automatically
           receive external IPs from the configured range.
