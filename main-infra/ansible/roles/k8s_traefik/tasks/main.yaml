@@ -101,13 +101,13 @@
   ansible.builtin.debug:
     msg: |
       Traefik Ingress Controller has been installed successfully!
-      
+
       LoadBalancer IP: {{ k8s_traefik_svc.resources[0].status.loadBalancer.ingress[0].ip }}
       Dashboard URL: http://traefik.lab.dzarpelon.com
       Longhorn Dashboard URL: http://longhorn.lab.dzarpelon.com
-      
+
       Traefik is ready to handle Ingress resources!
-      
+
       Entry Points:
         - HTTP (web): port 80
         - HTTPS (websecure): port 443
