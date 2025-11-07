@@ -1,0 +1,21 @@
+---
+- name: Install Calico CNI on Kubernetes cluster
+  hosts: k8s-1.lab.dzarpelon.com
+  become: true
+  tasks:
+    - name: Download Calico manifest
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
+        dest: /tmp/calico.yaml
+        mode: "0644"
+
+    - name: Apply Calico manifest
+      ansible.builtin.command: kubectl apply -f /tmp/calico.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: calico_install
+      changed_when: "'created' in calico_install.stdout or 'configured' in calico_install.stdout"
+
+    - name: Display Calico installation result
+      ansible.builtin.debug:
+        var: calico_install.stdout_lines

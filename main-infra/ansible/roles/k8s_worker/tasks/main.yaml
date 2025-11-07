@@ -1,0 +1,45 @@
+---
+- name: Join worker nodes to Kubernetes cluster
+  block:
+    - name: Check if node is already in cluster
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: k8s_worker_kubelet_conf
+
+    - name: Copy join command from master
+      ansible.builtin.slurp:
+        src: /tmp/k8s_join_command.sh
+      delegate_to: localhost
+      become: false
+      register: k8s_worker_join_command_encoded
+      when: not k8s_worker_kubelet_conf.stat.exists
+
+    - name: Execute kubeadm join command
+      ansible.builtin.shell: "{{ k8s_worker_join_command_encoded.content | b64decode }} --v=5"
+      args:
+        executable: /bin/bash
+      when: not k8s_worker_kubelet_conf.stat.exists and k8s_worker_join_command_encoded.content is defined
+      register: k8s_worker_join_result
+      changed_when: k8s_worker_join_result.rc == 0
+      retries: 3
+      delay: 30
+      until: k8s_worker_join_result.rc == 0
+
+    - name: Display join status
+      ansible.builtin.debug:
+        msg: "Node successfully joined the cluster"
+      when: not k8s_worker_kubelet_conf.stat.exists and k8s_worker_join_result is succeeded
+
+    - name: Wait for Calico to create CNI kubeconfig on worker
+      ansible.builtin.wait_for:
+        path: /etc/cni/net.d/calico-kubeconfig
+        state: present
+        timeout: 120
+      failed_when: false
+
+    - name: Fix IPv6 bracket notation bug in Calico kubeconfig (RHEL 10 ARM64 workaround)
+      ansible.builtin.replace:
+        path: /etc/cni/net.d/calico-kubeconfig
+        regexp: 'https://\[([0-9.]+)\]:([0-9]+)'
+        replace: 'https://\1:\2'
+      notify: restart kubelet

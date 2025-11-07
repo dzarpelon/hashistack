@@ -1,0 +1,39 @@
+---
+- name: Manage Kubernetes cluster
+  hosts: k8s
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Destroy Kubernetes cluster on all nodes
+      ansible.builtin.include_role:
+        name: k8s_destroy
+      when: k8s_state | default('present') == 'absent'
+
+    - name: Apply common Kubernetes configuration to all nodes
+      ansible.builtin.include_role:
+        name: k8s_common
+      when: k8s_state | default('present') == 'present'
+
+- name: Initialize Kubernetes master node
+  hosts: k8s_master
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Initialize master node
+      ansible.builtin.include_role:
+        name: k8s_master
+      when: k8s_state | default('present') == 'present'
+
+- name: Join worker nodes to cluster
+  hosts: k8s_worker
+  become: true
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Join workers to cluster
+      ansible.builtin.include_role:
+        name: k8s_worker
+      when: k8s_state | default('present') == 'present'

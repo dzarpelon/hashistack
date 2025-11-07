@@ -1,0 +1,201 @@
+---
+- name: Common Kubernetes setup for all nodes
+  block:
+    - name: Install chrony for time synchronization
+      ansible.builtin.dnf:
+        name: chrony
+        state: present
+
+    - name: Enable and start chronyd service
+      ansible.builtin.systemd:
+        name: chronyd
+        state: started
+        enabled: true
+
+    - name: Force time synchronization
+      ansible.builtin.command: chronyc makestep
+      changed_when: true
+
+    - name: Check current kernel version
+      ansible.builtin.command: uname -r
+      register: k8s_common_current_kernel
+      changed_when: false
+
+    - name: Set older kernel as default (br_netfilter module exists there)
+      ansible.builtin.command: grubby --set-default /boot/vmlinuz-6.12.0-55.9.1.el10_0.aarch64
+      when: "'6.12.0-55.42.1' in k8s_common_current_kernel.stdout"
+      register: k8s_common_kernel_changed
+
+    - name: Reboot to load kernel with br_netfilter module
+      ansible.builtin.reboot:
+        msg: "Rebooting to older kernel for br_netfilter support"
+        reboot_timeout: 300
+      when: k8s_common_kernel_changed is changed
+
+    - name: Wait for system to become reachable after reboot
+      ansible.builtin.wait_for_connection:
+        delay: 10
+        timeout: 300
+      when: k8s_common_kernel_changed is changed
+
+    - name: Verify we're running the correct kernel
+      ansible.builtin.command: uname -r
+      register: k8s_common_verify_kernel
+      changed_when: false
+      failed_when: "'6.12.0-55.9.1' not in k8s_common_verify_kernel.stdout"
+
+    - name: Configure /etc/hosts for cluster nodes
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        block: |
+          192.168.100.101 k8s-master.lab.dzarpelon.com k8s-master
+          192.168.100.102 k8s-1.lab.dzarpelon.com k8s-1
+          192.168.100.103 k8s-2.lab.dzarpelon.com k8s-2
+          192.168.100.104 k8s-3.lab.dzarpelon.com k8s-3
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - Kubernetes cluster nodes"
+        backup: true
+
+    - name: Disable swap
+      ansible.builtin.shell: |
+        swapoff -a
+        sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Set SELinux to permissive mode
+      ansible.builtin.shell: |
+        setenforce 0
+        sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/sysconfig/selinux
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+
+    - name: Disable firewall (homelab environment)
+      ansible.builtin.systemd:
+        name: firewalld
+        state: stopped
+        enabled: false
+
+    - name: Disable IPv6 (prevents kubelet IPv6 bracket notation bug)
+      ansible.builtin.sysctl:
+        name: "{{ item }}"
+        value: "1"
+        state: present
+        reload: true
+      loop:
+        - net.ipv6.conf.all.disable_ipv6
+        - net.ipv6.conf.default.disable_ipv6
+      notify: restart kubelet if running
+
+    - name: Load kernel modules
+      ansible.builtin.copy:
+        content: |
+          overlay
+          br_netfilter
+        dest: /etc/modules-load.d/containerd.conf
+        mode: "0644"
+
+    - name: Load overlay module
+      community.general.modprobe:
+        name: overlay
+        state: present
+
+    - name: Load br_netfilter module
+      community.general.modprobe:
+        name: br_netfilter
+        state: present
+
+    - name: Set sysctl parameters for Kubernetes
+      ansible.builtin.copy:
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+        dest: /etc/sysctl.d/k8s.conf
+        mode: "0644"
+
+    - name: Apply sysctl parameters
+      ansible.builtin.command: sysctl -p /etc/sysctl.d/k8s.conf
+      changed_when: false
+
+    # Add CRI-O repository (RHEL 10 uses CRI-O, not containerd.io)
+    - name: Add CRI-O repository
+      ansible.builtin.copy:
+        dest: /etc/yum.repos.d/cri-o.repo
+        mode: "0644"
+        content: |
+          [cri-o]
+          name=CRI-O
+          baseurl=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/repodata/repomd.xml.key
+
+    - name: Install CRI-O and dependencies
+      ansible.builtin.dnf:
+        name:
+          - cri-o
+        state: present
+      async: 300
+      poll: 10
+      retries: 3
+      delay: 10
+      register: crio_install_result
+      until: crio_install_result is succeeded
+
+    - name: Configure CRI-O to use systemd cgroup
+      ansible.builtin.copy:
+        dest: /etc/crio/crio.conf.d/02-cgroup.conf
+        mode: "0644"
+        content: |
+          [crio.runtime]
+          conmon_cgroup = "pod"
+          cgroup_manager = "systemd"
+
+    - name: Enable and start CRI-O service
+      ansible.builtin.systemd:
+        name: crio
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Check if kubelet is configured (cluster initialized)
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: k8s_kubelet_conf_check
+
+    - name: Add Kubernetes repository
+      ansible.builtin.copy:
+        content: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://pkgs.k8s.io/core:/stable:/v1.31/rpm/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://pkgs.k8s.io/core:/stable:/v1.31/rpm/repodata/repomd.xml.key
+          exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
+        dest: /etc/yum.repos.d/kubernetes.repo
+        mode: "0644"
+
+    - name: Install Kubernetes tools
+      ansible.builtin.dnf:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        disable_excludes: kubernetes
+      async: 300
+      poll: 10
+      retries: 3
+      delay: 10
+      register: k8s_install_result
+      until: k8s_install_result is succeeded
+
+    - name: Enable and start kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+        state: started

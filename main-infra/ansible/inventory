@@ -1,7 +1,21 @@
 [local]
 localhost ansible_connection=local
 
-[k8s]
-k8s-1.lab.dzarpelon.com
-k8s-2.lab.dzarpelon.com
-k8s-3.lab.dzarpelon.com
+[k8s_master]
+k8s-master.lab.dzarpelon.com ansible_host=192.168.100.101 ansible_user=dzarpelon ansible_ssh_private_key_file=~/.ssh/dzarpelon
+
+[k8s_worker]
+k8s-1.lab.dzarpelon.com ansible_host=192.168.100.102 ansible_user=dzarpelon ansible_ssh_private_key_file=~/.ssh/dzarpelon
+k8s-2.lab.dzarpelon.com ansible_host=192.168.100.103 ansible_user=dzarpelon ansible_ssh_private_key_file=~/.ssh/dzarpelon
+k8s-3.lab.dzarpelon.com ansible_host=192.168.100.104 ansible_user=dzarpelon ansible_ssh_private_key_file=~/.ssh/dzarpelon
+
+[k8s:children]
+k8s_master
+k8s_worker
+
+[docker]
+docker-1.lab.dzarpelon.com ansible_host=192.168.100.105 ansible_user=dzarpelon ansible_ssh_private_key_file=~/.ssh/dzarpelon
+
+[devops:children]
+k8s
+docker

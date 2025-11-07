@@ -1,0 +1,258 @@
+---
+- name: Initialize Kubernetes master node
+  block:
+    - name: Check if cluster is already initialized
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: k8s_master_admin_conf
+
+    - name: Create kubeadm configuration file with extended timeouts
+      ansible.builtin.copy:
+        dest: /tmp/kubeadm-config.yaml
+        content: |
+          apiVersion: kubeadm.k8s.io/v1beta3
+          kind: ClusterConfiguration
+          controlPlaneEndpoint: "{{ ansible_host }}:6443"
+          apiServer:
+            certSANs:
+              - "{{ inventory_hostname }}"
+              - "{{ ansible_host }}"
+            extraArgs:
+              advertise-address: "{{ ansible_host }}"
+              default-not-ready-toleration-seconds: "300"
+              default-unreachable-toleration-seconds: "300"
+              etcd-servers-overrides: "/events#https://127.0.0.1:2379"
+          etcd:
+            local:
+              extraArgs:
+                heartbeat-interval: "500"
+                election-timeout: "5000"
+          networking:
+            podSubnet: "10.244.0.0/16"
+          ---
+          apiVersion: kubeadm.k8s.io/v1beta3
+          kind: InitConfiguration
+          localAPIEndpoint:
+            advertiseAddress: "{{ ansible_host }}"
+            bindPort: 6443
+        mode: "0644"
+      when: not k8s_master_admin_conf.stat.exists
+
+    - name: Initialize Kubernetes cluster
+      ansible.builtin.command: kubeadm init --config /tmp/kubeadm-config.yaml
+      when: not k8s_master_admin_conf.stat.exists
+      register: k8s_master_kubeadm_init
+      changed_when: k8s_master_kubeadm_init.rc == 0
+
+    - name: Create .kube directory for root
+      ansible.builtin.file:
+        path: /root/.kube
+        state: directory
+        mode: "0755"
+      when: not k8s_master_admin_conf.stat.exists
+
+    - name: Copy admin.conf to root's kube config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: not k8s_master_admin_conf.stat.exists
+
+    - name: Create .kube directory for dzarpelon user
+      ansible.builtin.file:
+        path: /home/dzarpelon/.kube
+        state: directory
+        owner: dzarpelon
+        group: dzarpelon
+        mode: "0755"
+      when: not k8s_master_admin_conf.stat.exists
+
+    - name: Copy admin.conf to dzarpelon's kube config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/dzarpelon/.kube/config
+        remote_src: true
+        owner: dzarpelon
+        group: dzarpelon
+        mode: "0644"
+      when: not k8s_master_admin_conf.stat.exists
+
+    - name: Get kubeadm join command
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: k8s_master_join_command
+      changed_when: false
+
+    - name: Save join command to local file
+      ansible.builtin.copy:
+        content: "{{ k8s_master_join_command.stdout }}"
+        dest: /tmp/k8s_join_command.sh
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+      when: k8s_master_join_command.stdout is defined
+
+    - name: Display cluster initialization status
+      ansible.builtin.debug:
+        msg: |
+          Kubernetes cluster initialized successfully!
+          Join command saved to /tmp/k8s_join_command.sh
+      when: not k8s_master_admin_conf.stat.exists
+
+    - name: Remove taint from master node to allow pod scheduling
+      ansible.builtin.command: kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: false
+      failed_when: false
+      when: not k8s_master_admin_conf.stat.exists
+
+    - name: Patch API server manifest to increase startup delay (wait for etcd)
+      ansible.builtin.replace:
+        path: /etc/kubernetes/manifests/kube-apiserver.yaml
+        regexp: '(\s+)initialDelaySeconds: 10$'
+        replace: '\1initialDelaySeconds: 15'
+      when: not k8s_master_admin_conf.stat.exists
+
+    - name: Display master node configuration
+      ansible.builtin.debug:
+        msg: |
+          Master node ({{ inventory_hostname }}) is configured to run pods.
+          All taints have been removed from the control plane.
+
+    - name: Fetch kubeconfig to local machine
+      ansible.builtin.fetch:
+        src: /home/dzarpelon/.kube/config
+        dest: /tmp/k8s-vms-kubeconfig
+        flat: true
+      become: false
+
+    - name: Ensure local .kube directory exists
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/.kube"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+
+    - name: Copy kubeconfig to local machine
+      ansible.builtin.copy:
+        src: /tmp/k8s-vms-kubeconfig
+        dest: "{{ lookup('env', 'HOME') }}/.kube/config-k8s-vms"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+
+    - name: Check if default kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/.kube/config"
+      register: k8s_master_default_kubeconfig
+      delegate_to: localhost
+      become: false
+
+    - name: Backup existing kubeconfig if it exists
+      ansible.builtin.copy:
+        src: "{{ lookup('env', 'HOME') }}/.kube/config"
+        dest: "{{ lookup('env', 'HOME') }}/.kube/config.backup.{{ ansible_date_time.epoch }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      when: k8s_master_default_kubeconfig.stat.exists
+
+    - name: Copy kubeconfig directly (preserving certificate data)
+      ansible.builtin.copy:
+        src: /tmp/k8s-vms-kubeconfig
+        dest: "{{ lookup('env', 'HOME') }}/.kube/config"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Set k8s-vms as the current context
+      ansible.builtin.command: kubectl config use-context kubernetes-admin@kubernetes
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Display kubeconfig status
+      ansible.builtin.debug:
+        msg: |
+          Kubeconfig has been copied to {{ lookup('env', 'HOME') }}/.kube/config
+          Backup of previous config: {{ lookup('env', 'HOME') }}/.kube/config.backup.{{ ansible_date_time.epoch }}
+          Current context: kubernetes-admin@kubernetes
+
+          You can now use kubectl directly:
+            kubectl get nodes
+            kubectl get pods -A
+
+    - name: Check if Calico is already installed
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | wc -l
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: k8s_master_calico_check
+      changed_when: false
+      failed_when: false
+
+    - name: Download Calico manifest
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/projectcalico/calico/v3.31.0/manifests/calico.yaml
+        dest: /tmp/calico.yaml
+        mode: "0644"
+      when: k8s_master_calico_check.stdout | int == 0
+
+    - name: Wait for API server to be ready before installing Calico
+      ansible.builtin.command: kubectl get --raw /healthz
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      when: k8s_master_calico_check.stdout | int == 0
+      register: k8s_master_api_health
+      until: k8s_master_api_health.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Install Calico network plugin
+      ansible.builtin.command: kubectl apply -f /tmp/calico.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      when: k8s_master_calico_check.stdout | int == 0
+      register: k8s_master_calico_install
+      changed_when: k8s_master_calico_install.rc == 0
+
+    - name: Wait for Calico pods to be ready
+      ansible.builtin.command: kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      when: k8s_master_calico_check.stdout | int == 0
+      register: k8s_master_calico_wait
+      changed_when: false
+      failed_when: false
+
+    - name: Wait for Calico to create CNI kubeconfig
+      ansible.builtin.wait_for:
+        path: /etc/cni/net.d/calico-kubeconfig
+        state: present
+        timeout: 60
+      when: k8s_master_calico_check.stdout | int == 0
+      failed_when: false
+
+    - name: Fix IPv6 bracket notation bug in Calico kubeconfig (RHEL 10 ARM64 workaround)
+      ansible.builtin.replace:
+        path: /etc/cni/net.d/calico-kubeconfig
+        regexp: 'https://\[([0-9.]+)\]:([0-9]+)'
+        replace: 'https://\1:\2'
+      when: k8s_master_calico_check.stdout | int == 0
+      notify: restart kubelet
+
+    - name: Display Calico installation status
+      ansible.builtin.debug:
+        msg: |
+          Calico network plugin has been installed successfully!
+          Nodes should now transition to Ready state.
+      when: k8s_master_calico_check.stdout | int == 0

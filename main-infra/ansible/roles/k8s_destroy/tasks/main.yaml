@@ -1,0 +1,114 @@
+---
+- name: Destroy Kubernetes cluster
+  block:
+    - name: Reset kubeadm on all nodes
+      ansible.builtin.command: kubeadm reset -f
+      changed_when: true
+      failed_when: false
+
+    - name: Stop kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove Kubernetes packages
+      ansible.builtin.dnf:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: absent
+      failed_when: false
+
+    - name: Remove containerd
+      ansible.builtin.dnf:
+        name: containerd.io
+        state: absent
+      failed_when: false
+
+    - name: Remove Kubernetes configuration files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes
+        - /var/lib/kubelet
+        - /var/lib/etcd
+        - /etc/cni/net.d
+        - /opt/cni/bin
+        - /var/lib/cni
+        - /root/.kube
+        - /home/dzarpelon/.kube
+      failed_when: false
+
+    - name: Remove containerd configuration
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/containerd
+        - /var/lib/containerd
+      failed_when: false
+
+    - name: Remove kernel modules configuration
+      ansible.builtin.file:
+        path: /etc/modules-load.d/containerd.conf
+        state: absent
+      failed_when: false
+
+    - name: Remove sysctl parameters
+      ansible.builtin.file:
+        path: /etc/sysctl.d/k8s.conf
+        state: absent
+      failed_when: false
+
+    - name: Remove Kubernetes repository
+      ansible.builtin.file:
+        path: /etc/yum.repos.d/kubernetes.repo
+        state: absent
+      failed_when: false
+
+    - name: Remove Docker CE repository
+      ansible.builtin.file:
+        path: /etc/yum.repos.d/docker-ce.repo
+        state: absent
+      failed_when: false
+
+    - name: Re-enable firewall (cleanup)
+      ansible.builtin.systemd:
+        name: firewalld
+        state: started
+        enabled: true
+      failed_when: false
+
+    - name: Clean up iptables rules
+      ansible.builtin.shell: |
+        iptables -F && iptables -t nat -F && iptables -t mangle -F && iptables -X
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+
+    - name: Remove local join command file
+      ansible.builtin.file:
+        path: /tmp/k8s_join_command.sh
+        state: absent
+      delegate_to: localhost
+      become: false
+      run_once: true
+      failed_when: false
+
+    - name: Display cleanup status
+      ansible.builtin.debug:
+        msg: |
+          Kubernetes cluster has been removed from {{ inventory_hostname }}
+          All configurations, packages, and data have been cleaned up.
