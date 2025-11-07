@@ -1,2 +1,7 @@
 [local]
 localhost ansible_connection=local
+
+[k8s]
+k8s-1.lab.dzarpelon.com
+k8s-2.lab.dzarpelon.com
+k8s-3.lab.dzarpelon.com
