@@ -114,10 +114,10 @@
         dest: /etc/NetworkManager/dnsmasq.d/lab-dns.conf
         mode: "0644"
       when: k8s_state | default('present') == 'present'
-      notify: restart NetworkManager
+      notify: Restart NetworkManager
 
   handlers:
-    - name: restart NetworkManager
+    - name: Restart NetworkManager
       ansible.builtin.systemd:
         name: NetworkManager
         state: restarted

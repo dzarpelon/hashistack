@@ -100,8 +100,11 @@
   failed_when: false
 
 - name: Generate htpasswd hash using htpasswd command
-  ansible.builtin.shell: |
-    htpasswd -nbB {{ dashboard_admin_user }} '{{ dashboard_admin_password }}' | base64
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      htpasswd -nbB {{ dashboard_admin_user }} '{{ dashboard_admin_password }}' | base64
+    executable: /bin/bash
   register: k8s_traefik_htpasswd
   delegate_to: localhost
   become: false
@@ -115,7 +118,7 @@
     import subprocess
     import base64
     # Use openssl for bcrypt hash
-    result = subprocess.run(['openssl', 'passwd', '-apr1', '{{ dashboard_admin_password }}'], 
+    result = subprocess.run(['openssl', 'passwd', '-apr1', '{{ dashboard_admin_password }}'],
                           capture_output=True, text=True)
     hash = result.stdout.strip()
     htpasswd_line = '{{ dashboard_admin_user }}:' + hash

@@ -1,6 +1,6 @@
 ---
-- name: restart kubelet if running
+- name: Restart kubelet if running
   ansible.builtin.systemd:
     name: kubelet
     state: restarted
-  when: k8s_kubelet_conf_check.stat.exists
+  when: k8s_common_kubelet_conf_check.stat.exists

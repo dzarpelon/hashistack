@@ -120,16 +120,16 @@
       ansible.builtin.command: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
-      register: calico_install
-      changed_when: "'created' in calico_install.stdout or 'configured' in calico_install.stdout"
+      register: k8s_master_calico_install
+      changed_when: "'created' in k8s_master_calico_install.stdout or 'configured' in k8s_master_calico_install.stdout"
       when: not k8s_master_admin_conf.stat.exists
 
     - name: Wait for Calico pods to be ready
       ansible.builtin.command: kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=300s
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
-      register: calico_ready
-      until: calico_ready.rc == 0
+      register: k8s_master_calico_ready
+      until: k8s_master_calico_ready.rc == 0
       retries: 3
       delay: 10
       changed_when: false

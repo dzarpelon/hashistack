@@ -25,6 +25,7 @@
       ansible.builtin.command: grubby --set-default /boot/vmlinuz-6.12.0-55.9.1.el10_0.aarch64
       when: "'6.12.0-55.42.1' in k8s_common_current_kernel.stdout"
       register: k8s_common_kernel_changed
+      changed_when: k8s_common_kernel_changed.rc == 0
 
     - name: Reboot to load kernel with br_netfilter module
       ansible.builtin.reboot:
@@ -142,7 +143,7 @@
       poll: 10
       retries: 3
       delay: 10
-      register: crio_install_result
+      register: k8s_common_crio_install_result
       until: crio_install_result is succeeded
 
     - name: Configure CRI-O to use systemd cgroup
@@ -164,7 +165,7 @@
     - name: Check if kubelet is configured (cluster initialized)
       ansible.builtin.stat:
         path: /etc/kubernetes/kubelet.conf
-      register: k8s_kubelet_conf_check
+      register: k8s_common_kubelet_conf_check
 
     - name: Add Kubernetes repository
       ansible.builtin.copy:
@@ -191,8 +192,8 @@
       poll: 10
       retries: 3
       delay: 10
-      register: k8s_install_result
-      until: k8s_install_result is succeeded
+      register: k8s_common_install_result
+      until: k8s_common_install_result is succeeded
 
     - name: Enable and start kubelet service
       ansible.builtin.systemd:

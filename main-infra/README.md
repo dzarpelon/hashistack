@@ -83,6 +83,7 @@ The automation includes pre-configured Ingress resources for:
    - Inventory configured in `ansible/inventory`
 
 3. **DNS Configuration** (for controller):
+
    ```bash
    # macOS example
    sudo mkdir -p /etc/resolver
