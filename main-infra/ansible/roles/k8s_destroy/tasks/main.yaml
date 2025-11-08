@@ -1,6 +1,70 @@
 ---
 - name: Destroy Kubernetes cluster
   block:
+    - name: Remove cert-manager resources (if cluster is still running)
+      block:
+        - name: Delete wildcard certificate
+          kubernetes.core.k8s:
+            state: absent
+            api_version: cert-manager.io/v1
+            kind: Certificate
+            name: lab-wildcard-tls
+            namespace: traefik-system
+          delegate_to: localhost
+          become: false
+          failed_when: false
+
+        - name: Delete ClusterIssuers
+          kubernetes.core.k8s:
+            state: absent
+            api_version: cert-manager.io/v1
+            kind: ClusterIssuer
+            name: "{{ item }}"
+          delegate_to: localhost
+          become: false
+          loop:
+            - letsencrypt-staging
+            - letsencrypt-prod
+          failed_when: false
+
+        - name: Uninstall cert-manager via Helm
+          kubernetes.core.helm:
+            name: cert-manager
+            release_namespace: cert-manager
+            state: absent
+          delegate_to: localhost
+          become: false
+          failed_when: false
+
+        - name: Delete cert-manager namespace
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Namespace
+            name: cert-manager
+          delegate_to: localhost
+          become: false
+          failed_when: false
+
+        - name: Delete cert-manager CRDs
+          kubernetes.core.k8s:
+            state: absent
+            api_version: apiextensions.k8s.io/v1
+            kind: CustomResourceDefinition
+            name: "{{ item }}"
+          delegate_to: localhost
+          become: false
+          loop:
+            - certificates.cert-manager.io
+            - certificaterequests.cert-manager.io
+            - challenges.acme.cert-manager.io
+            - clusterissuers.cert-manager.io
+            - issuers.cert-manager.io
+            - orders.acme.cert-manager.io
+          failed_when: false
+
+      when: inventory_hostname == groups['k8s_master'][0]
+
     - name: Reset kubeadm on all nodes
       ansible.builtin.command: kubeadm reset -f
       changed_when: true

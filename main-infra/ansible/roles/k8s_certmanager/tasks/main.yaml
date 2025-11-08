@@ -1,0 +1,302 @@
+---
+# cert-manager deployment tasks
+
+- name: Add Jetstack Helm repository
+  kubernetes.core.helm_repository:
+    name: "{{ k8s_certmanager_helm_repo_name }}"
+    repo_url: "{{ k8s_certmanager_helm_repo_url }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Create cert-manager namespace
+  kubernetes.core.k8s:
+    name: "{{ k8s_certmanager_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Deploy cert-manager via Helm
+  kubernetes.core.helm:
+    name: cert-manager
+    chart_ref: "{{ k8s_certmanager_helm_repo_name }}/{{ k8s_certmanager_helm_chart }}"
+    chart_version: "{{ k8s_certmanager_chart_version }}"
+    release_namespace: "{{ k8s_certmanager_namespace }}"
+    create_namespace: false
+    values:
+      installCRDs: true # Install CustomResourceDefinitions
+      global:
+        leaderElection:
+          namespace: "{{ k8s_certmanager_namespace }}"
+      replicaCount: 2 # HA setup
+      webhook:
+        replicaCount: 2
+      cainjector:
+        replicaCount: 2
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: k8s_certmanager_helm_install
+
+- name: Wait for cert-manager pods to be ready
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: "{{ k8s_certmanager_namespace }}"
+    label_selectors:
+      - "app.kubernetes.io/instance=cert-manager"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: k8s_certmanager_pods
+  until: >
+    k8s_certmanager_pods.resources | length > 0 and
+    k8s_certmanager_pods.resources |
+    selectattr('status.phase', 'equalto', 'Running') | list | length ==
+    k8s_certmanager_pods.resources | length
+  retries: 30
+  delay: 10
+
+- name: Create Cloudflare API token Secret
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'cloudflare-secret.yaml.j2') }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true # Don't log the secret
+
+- name: Create Let's Encrypt Staging ClusterIssuer
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'clusterissuer-staging.yaml.j2') }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Create Let's Encrypt Production ClusterIssuer
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'clusterissuer-prod.yaml.j2') }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Wait for ClusterIssuers to be ready
+  kubernetes.core.k8s_info:
+    kind: ClusterIssuer
+    api_version: cert-manager.io/v1
+    name: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: k8s_certmanager_issuer_check
+  until: >
+    k8s_certmanager_issuer_check.resources | length > 0 and
+    k8s_certmanager_issuer_check.resources[0].get('status', {}).get('conditions', []) |
+    selectattr('type', 'equalto', 'Ready') |
+    selectattr('status', 'equalto', 'True') | list | length > 0
+  retries: 10
+  delay: 5
+  loop:
+    - letsencrypt-staging
+    - letsencrypt-prod
+  failed_when: false # Don't fail if not ready yet, just warn
+
+- name: Create wildcard certificate in traefik-system namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: lab-wildcard-tls
+        namespace: traefik-system
+      spec:
+        secretName: lab-wildcard-tls
+        issuerRef:
+          name: "{{ 'letsencrypt-staging' if k8s_certmanager_use_staging else 'letsencrypt-prod' }}"
+          kind: ClusterIssuer
+        dnsNames: "{{ k8s_certmanager_wildcard_domains }}"
+        duration: "{{ k8s_certmanager_cert_duration }}"
+        renewBefore: "{{ k8s_certmanager_cert_renew_before }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: k8s_certmanager_wildcard_enabled | bool
+
+- name: Create wildcard certificate in longhorn-system namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: lab-wildcard-tls
+        namespace: longhorn-system
+      spec:
+        secretName: lab-wildcard-tls
+        issuerRef:
+          name: "{{ 'letsencrypt-staging' if k8s_certmanager_use_staging else 'letsencrypt-prod' }}"
+          kind: ClusterIssuer
+        dnsNames: "{{ k8s_certmanager_wildcard_domains }}"
+        duration: "{{ k8s_certmanager_cert_duration }}"
+        renewBefore: "{{ k8s_certmanager_cert_renew_before }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: k8s_certmanager_wildcard_enabled | bool
+
+- name: Wait for wildcard certificate to be ready in traefik-system
+  kubernetes.core.k8s_info:
+    kind: Certificate
+    api_version: cert-manager.io/v1
+    name: lab-wildcard-tls
+    namespace: traefik-system
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: k8s_certmanager_cert_check_traefik
+  until: >
+    k8s_certmanager_cert_check_traefik.resources | length > 0 and
+    k8s_certmanager_cert_check_traefik.resources[0].get('status', {}).get('conditions', []) |
+    selectattr('type', 'equalto', 'Ready') |
+    selectattr('status', 'equalto', 'True') | list | length > 0
+  retries: 60 # DNS-01 challenge can take time
+  delay: 10
+  when: k8s_certmanager_wildcard_enabled | bool
+  failed_when: false # Don't fail deployment if cert not ready immediately
+
+- name: Wait for wildcard certificate to be ready in longhorn-system
+  kubernetes.core.k8s_info:
+    kind: Certificate
+    api_version: cert-manager.io/v1
+    name: lab-wildcard-tls
+    namespace: longhorn-system
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: k8s_certmanager_cert_check_longhorn
+  until: >
+    k8s_certmanager_cert_check_longhorn.resources | length > 0 and
+    k8s_certmanager_cert_check_longhorn.resources[0].get('status', {}).get('conditions', []) |
+    selectattr('type', 'equalto', 'Ready') |
+    selectattr('status', 'equalto', 'True') | list | length > 0
+  retries: 60 # DNS-01 challenge can take time
+  delay: 10
+  when: k8s_certmanager_wildcard_enabled | bool
+  failed_when: false # Don't fail deployment if cert not ready immediately
+
+- name: Apply HTTPS redirect middleware
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ playbook_dir }}/../../manifests/ingress/https-redirect-middleware.yaml"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Update Traefik dashboard IngressRoute with TLS (HTTP entrypoint with redirect)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: traefik.io/v1alpha1
+      kind: IngressRoute
+      metadata:
+        name: dashboard
+        namespace: traefik-system
+      spec:
+        entryPoints:
+          - web # HTTP entrypoint
+        routes:
+          - match: Host(`traefik.lab.dzarpelon.com`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
+            kind: Rule
+            middlewares:
+              - name: https-redirect # Redirect HTTP to HTTPS
+                namespace: traefik-system
+            services:
+              - name: api@internal
+                kind: TraefikService
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Create Traefik dashboard IngressRoute with TLS (HTTPS entrypoint)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: traefik.io/v1alpha1
+      kind: IngressRoute
+      metadata:
+        name: dashboard-https
+        namespace: traefik-system
+      spec:
+        entryPoints:
+          - websecure # HTTPS entrypoint
+        routes:
+          - match: Host(`traefik.lab.dzarpelon.com`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
+            kind: Rule
+            middlewares:
+              - name: dashboard-auth
+                namespace: traefik-system
+            services:
+              - name: api@internal
+                kind: TraefikService
+        tls:
+          secretName: lab-wildcard-tls # Reference to wildcard certificate
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: k8s_certmanager_wildcard_enabled | bool
+
+- name: Update Longhorn Ingress with TLS
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: longhorn-ingress
+        namespace: longhorn-system
+        annotations:
+          traefik.ingress.kubernetes.io/router.entrypoints: websecure
+          traefik.ingress.kubernetes.io/router.middlewares: longhorn-system-longhorn-auth@kubernetescrd
+      spec:
+        ingressClassName: traefik
+        tls:
+          - hosts:
+              - longhorn.lab.dzarpelon.com
+            secretName: lab-wildcard-tls
+        rules:
+          - host: longhorn.lab.dzarpelon.com
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: longhorn-frontend
+                      port:
+                        number: 80
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: k8s_certmanager_wildcard_enabled | bool
+
+- name: Display cert-manager deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "cert-manager {{ k8s_certmanager_version }} deployed successfully"
+      - "Namespace: {{ k8s_certmanager_namespace }}"
+      - "ClusterIssuers created: letsencrypt-staging, letsencrypt-prod"
+      - "Using: {{ 'STAGING' if k8s_certmanager_use_staging else 'PRODUCTION' }} Let's Encrypt server"
+      - "Wildcard certificate: {{ 'Enabled' if k8s_certmanager_wildcard_enabled else 'Disabled' }}"
+      - ""
+      - "Verify deployment:"
+      - "  kubectl get pods -n {{ k8s_certmanager_namespace }}"
+      - "  kubectl get clusterissuer"
+      - "  kubectl get certificate -n traefik-system"
+  delegate_to: localhost
+  become: false
+  run_once: true

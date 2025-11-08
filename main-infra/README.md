@@ -59,6 +59,18 @@ Components:
   - Support for multiple providers (Kubernetes Ingress + CRDs)
   - Access logs and metrics
 
+#### 5. **cert-manager** - Automated Certificate Management
+
+- **Version**: v1.15.3 (⚠️ Note: v1.19.x has CNI compatibility issues with Calico v3.26.1)
+- **Deployment**: Helm chart
+- **Why**: Automates X.509 certificate management in Kubernetes, integrates with Let's Encrypt for browser-trusted certificates
+- **Features**:
+  - Automated certificate issuance and renewal
+  - DNS-01 challenge support (works with private IPs)
+  - Wildcard certificate support
+  - Integration with Cloudflare DNS
+  - Let's Encrypt staging and production issuers
+
 ### Pre-configured Services
 
 The automation includes pre-configured Ingress resources for:
@@ -93,32 +105,67 @@ The automation includes pre-configured Ingress resources for:
 
 ## Configuration
 
-### Dashboard Authentication
+### Secrets Configuration
 
-The automation secures dashboard access with basic authentication. Before deployment, configure credentials:
+The automation requires configuration of sensitive credentials before deployment.
 
-1. **Copy the example secrets file**:
+#### 1. Copy the Example Secrets File
 
-   ```bash
-   cd main-infra/ansible/group_vars/all
-   cp secrets.yaml.example secrets.yaml
-   ```
+```bash
+cd main-infra/ansible/group_vars/all
+cp secrets.yaml.example secrets.yaml
+```
 
-2. **Edit credentials** in `secrets.yaml`:
+#### 2. Configure Dashboard Authentication
 
-   ```yaml
-   dashboard_admin_user: admin
-   dashboard_admin_password: YOUR_SECURE_PASSWORD
-   ```
+Edit `secrets.yaml` to set basic authentication credentials for dashboards:
 
-3. **The secrets.yaml file is gitignored** and will not be committed to version control
+```yaml
+dashboard_admin_user: admin
+dashboard_admin_password: YOUR_SECURE_PASSWORD
+```
 
 **Protected Dashboards**:
 
-- Traefik Dashboard: `http://traefik.lab.dzarpelon.com/dashboard/`
-- Longhorn Dashboard: `http://longhorn.lab.dzarpelon.com/`
+- Traefik Dashboard: `https://traefik.lab.dzarpelon.com/dashboard/`
+- Longhorn Dashboard: `https://longhorn.lab.dzarpelon.com/`
 
-Both use the same credentials configured in `secrets.yaml`.
+#### 3. Configure cert-manager for TLS Certificates
+
+##### Create Cloudflare API Token
+
+1. Log in to Cloudflare Dashboard: https://dash.cloudflare.com/profile/api-tokens
+2. Click **Create Token**
+3. Use template: **Edit zone DNS**
+4. Permissions: `Zone - DNS - Edit`
+5. Zone Resources: `Include - Specific zone - dzarpelon.com`
+6. Create token and copy it (shown only once!)
+
+##### Update secrets.yaml
+
+Add cert-manager configuration:
+
+```yaml
+# Email for Let's Encrypt certificate notifications
+certmanager_email: "your-email@dzarpelon.com"
+
+# Cloudflare API Token for DNS-01 ACME challenge
+certmanager_cloudflare_api_token: "YOUR_CLOUDFLARE_API_TOKEN"
+```
+
+**Complete secrets.yaml example**:
+
+```yaml
+# Dashboard Authentication
+dashboard_admin_user: admin
+dashboard_admin_password: P@ssw0rd!
+
+# cert-manager Configuration
+certmanager_email: "admin@dzarpelon.com"
+certmanager_cloudflare_api_token: "your-cloudflare-api-token-here"
+```
+
+**Note**: The `secrets.yaml` file is gitignored and will not be committed to version control.
 
 ## Deployment
 
@@ -191,28 +238,63 @@ kubectl get pods -n traefik-system
 kubectl get svc -n traefik-system
 kubectl get ingress -A
 
+# Check cert-manager
+kubectl get pods -n cert-manager
+kubectl get clusterissuer
+kubectl describe clusterissuer letsencrypt-staging
+kubectl describe clusterissuer letsencrypt-prod
+
+# Check wildcard certificate
+kubectl get certificate -n traefik-system
+kubectl describe certificate lab-wildcard-tls -n traefik-system
+
 # Test DNS resolution
 dig @192.168.100.101 -p 30053 traefik.lab.dzarpelon.com
 dig @192.168.100.101 -p 30053 longhorn.lab.dzarpelon.com
 ```
 
-### Access Protected Dashboards
-
-Both dashboards are protected with basic authentication. Use the credentials configured in `ansible/group_vars/all/secrets.yaml`.
+### Verify TLS Certificates
 
 ```bash
-# Test authentication (should return 401 Unauthorized)
-curl -i http://traefik.lab.dzarpelon.com/dashboard/
-curl -i http://longhorn.lab.dzarpelon.com/
+# Check if certificate is ready
+kubectl get certificate -n traefik-system lab-wildcard-tls
 
-# Access with credentials
-curl -u admin:'YOUR_PASSWORD' http://traefik.lab.dzarpelon.com/dashboard/
-curl -u admin:'YOUR_PASSWORD' http://longhorn.lab.dzarpelon.com/
+# View certificate details
+kubectl describe certificate lab-wildcard-tls -n traefik-system
 
-# Or open in browser and enter credentials when prompted:
-# - Traefik Dashboard: http://traefik.lab.dzarpelon.com/dashboard/
-# - Longhorn Dashboard: http://longhorn.lab.dzarpelon.com/
+# Check the secret containing the certificate
+kubectl get secret lab-wildcard-tls -n traefik-system
+
+# Test HTTPS access (should work without warnings if using production issuer)
+curl -v https://traefik.lab.dzarpelon.com/dashboard/
+curl -v https://longhorn.lab.dzarpelon.com/
+
+# Check certificate details
+openssl s_client -connect traefik.lab.dzarpelon.com:443 -servername traefik.lab.dzarpelon.com < /dev/null 2>/dev/null | openssl x509 -noout -text
 ```
+
+### Access Protected Dashboards
+
+Both dashboards are protected with basic authentication and served over HTTPS. Use the credentials configured in `ansible/group_vars/all/secrets.yaml`.
+
+```bash
+# HTTP requests are automatically redirected to HTTPS
+curl -I http://traefik.lab.dzarpelon.com/dashboard/
+# Should return: HTTP/1.1 301 Moved Permanently
+
+# HTTPS requires authentication (should return 401 Unauthorized)
+curl -k -I https://traefik.lab.dzarpelon.com/dashboard/
+
+# Access with credentials over HTTPS
+curl -k -u admin:'YOUR_PASSWORD' https://traefik.lab.dzarpelon.com/dashboard/
+curl -k -u admin:'YOUR_PASSWORD' https://longhorn.lab.dzarpelon.com/
+
+# Or open in browser (credentials will be prompted):
+# - Traefik Dashboard: https://traefik.lab.dzarpelon.com/dashboard/
+# - Longhorn Dashboard: https://longhorn.lab.dzarpelon.com/
+```
+
+**Note**: Use `-k` flag with curl to skip certificate verification if using staging certificates. Production certificates from Let's Encrypt are trusted by default.
 
 **Verify authentication resources:**
 
@@ -352,6 +434,99 @@ Verify htpasswd format in secret:
 kubectl get secret -n traefik-system traefik-dashboard-auth -o jsonpath='{.data.users}' | base64 -d
 ```
 
+### Certificate not being issued
+
+Check cert-manager pods:
+
+```bash
+kubectl get pods -n cert-manager
+kubectl logs -n cert-manager -l app=cert-manager
+kubectl logs -n cert-manager -l app=webhook
+```
+
+Check ClusterIssuer status:
+
+```bash
+kubectl describe clusterissuer letsencrypt-staging
+kubectl describe clusterissuer letsencrypt-prod
+```
+
+Check Certificate status:
+
+```bash
+kubectl describe certificate lab-wildcard-tls -n traefik-system
+kubectl get certificaterequest -n traefik-system
+kubectl describe certificaterequest -n traefik-system
+```
+
+Check Challenge resources (DNS-01):
+
+```bash
+kubectl get challenge -A
+kubectl describe challenge -A
+```
+
+Common issues:
+
+- **Invalid Cloudflare API token**: Verify token has DNS edit permissions for dzarpelon.com
+- **DNS propagation delay**: DNS-01 challenge can take 2-10 minutes
+- **Rate limiting**: Let's Encrypt production has rate limits (50 certs/week per domain). Use staging for testing
+- **Wrong email**: Check certmanager_email in secrets.yaml
+
+### HTTPS not working / Certificate warnings
+
+If using **staging certificates** (default):
+
+- Staging certs are NOT trusted by browsers
+- You'll see certificate warnings - this is expected
+- Use `-k` flag with curl
+- To switch to production: Set `k8s_certmanager_use_staging: false` in role defaults and redeploy
+
+If using **production certificates**:
+
+- Verify certificate is ready: `kubectl get certificate -n traefik-system`
+- Check certificate issuer: Should show "letsencrypt-prod"
+- Verify DNS resolution: Certificate must match the domain you're accessing
+- Clear browser cache if seeing old certificate
+
+Check certificate details:
+
+```bash
+# View certificate info
+openssl s_client -connect traefik.lab.dzarpelon.com:443 -servername traefik.lab.dzarpelon.com < /dev/null 2>/dev/null | openssl x509 -noout -text | grep -A2 "Issuer"
+
+# For staging: Issuer should be "(STAGING)"
+# For production: Issuer should be "Let's Encrypt"
+```
+
+### Cloudflare DNS challenge failing
+
+Check External-DNS logs:
+
+```bash
+kubectl logs -n cert-manager -l app=cert-manager | grep -i cloudflare
+```
+
+Verify Cloudflare secret:
+
+```bash
+kubectl get secret cloudflare-api-token -n cert-manager
+```
+
+Test Cloudflare API token manually:
+
+```bash
+# Replace with your token
+curl -X GET "https://api.cloudflare.com/client/v4/zones" \
+  -H "Authorization: Bearer YOUR_CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+Ensure token has permissions:
+
+- Zone - DNS - Edit
+- Include - Specific zone - dzarpelon.com
+
 ## Architecture Decisions
 
 ### Why these components?
@@ -366,6 +541,24 @@ kubectl get secret -n traefik-system traefik-dashboard-auth -o jsonpath='{.data.
 
 5. **Basic Auth for Dashboards**: Simple, secure authentication without additional infrastructure; credentials managed via Ansible variables; htpasswd format compatible with all web browsers
 
+6. **cert-manager + Let's Encrypt**: Automated certificate management with DNS-01 challenge; browser-trusted certificates via Let's Encrypt; supports wildcard certificates; automatic renewal before expiry
+
+### Certificate Strategy
+
+**Current (v1.1.0): Let's Encrypt + Cloudflare DNS-01**
+
+- Public-facing dashboards use Let's Encrypt certificates
+- DNS-01 challenge allows certificates for internal IPs (no public access needed)
+- Wildcard certificate (`*.lab.dzarpelon.com`) covers all services
+- Automatic renewal 30 days before expiry
+- Browser-trusted certificates (no warnings with production issuer)
+
+**Future (v1.3.0+): Hybrid with Vault PKI**
+
+- Let's Encrypt: User-facing dashboards (90-day certificates)
+- Vault PKI: Internal services and service mesh (short-lived certificates: hours to days)
+- Best of both worlds: Public trust + fine-grained internal control
+
 ### Deployment Order
 
 The order is critical for dependencies:
@@ -376,7 +569,9 @@ The order is critical for dependencies:
 4. **MetalLB before storage**: LoadBalancer IPs needed for any exposed services
 5. **Longhorn before DNS**: etcd needs persistent storage
 6. **DNS before Traefik**: Ingress controller benefits from automatic DNS
-7. **DNS client last**: Ensures all cluster services are ready before VMs try to use custom DNS
+7. **Traefik before cert-manager**: TLS certificates require ingress to be configured
+8. **cert-manager after Traefik**: Updates existing IngressRoutes/Ingresses with TLS
+9. **DNS client last**: Ensures all cluster services are ready before VMs try to use custom DNS
 
 ## Files Structure
 
