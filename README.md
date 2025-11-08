@@ -1,6 +1,6 @@
 # HashiStack Lab Environment
 
-This repository contains automated infrastructure deployment for a complete Kubernetes cluster with production-ready add-ons, designed to serve as a foundation for HashiCorp stack deployment (Consul, Vault, Nomad).
+This repository contains automated infrastructure deployment for a complete Kubernetes cluster with production-ready add-ons, designed to serve as a foundation for HashiCorp stack deployment (Consul, Vault).
 
 ## 📋 Overview
 
@@ -301,13 +301,63 @@ The automation follows a specific order for dependencies:
 
 ## 🚧 Future Roadmap
 
-- [ ] HashiCorp Consul deployment
-- [ ] HashiCorp Vault deployment
-- [ ] HashiCorp Nomad deployment
-- [ ] TLS/HTTPS with cert-manager
-- [ ] Monitoring stack (Prometheus + Grafana)
-- [ ] Logging stack (ELK/Loki)
-- [ ] GitOps with ArgoCD/Flux
+The following enhancements are planned in priority order:
+
+### Phase 1: Security (v1.1.0)
+
+- [ ] **TLS/HTTPS with cert-manager**: Implement automated certificate management
+  - Install cert-manager
+  - Configure Let's Encrypt or self-signed CA for lab environment
+  - Update Traefik IngressRoutes for HTTPS
+  - Secure all dashboards (Traefik, Longhorn)
+
+### Phase 2: Observability (v1.2.0)
+
+- [ ] **Monitoring stack (Prometheus + Grafana)**: Establish baseline metrics and alerting
+  - Deploy Prometheus Operator
+  - Configure ServiceMonitors for all components
+  - Create Grafana dashboards for Kubernetes, MetalLB, Longhorn, Traefik
+  - Set up alerting rules
+
+### Phase 3: HashiCorp Vault (v1.3.0)
+
+- [ ] **HashiCorp Vault deployment**: Centralized secrets management
+  - Deploy Vault with Integrated Storage (Raft) or leverage existing etcd cluster
+  - Configure Vault HA with 3 instances
+  - Enable Kubernetes authentication
+  - Migrate dashboard credentials from `secrets.yaml` to Vault
+  - Configure PKI engine for internal certificate management
+
+### Phase 4: HashiCorp Consul (v1.4.0)
+
+- [ ] **HashiCorp Consul deployment**: Service mesh and enhanced service discovery
+  - Deploy Consul with service mesh enabled
+  - Configure mTLS between pods using Consul Connect
+  - Integrate with Vault for certificate management
+  - Enhanced health checking and service discovery (complementing existing DNS)
+
+### Phase 5: Centralized Logging (v1.5.0)
+
+- [ ] **Logging stack (Loki or ELK)**: Complete observability with log aggregation
+  - Deploy Loki or Elasticsearch stack
+  - Configure log collection from all pods
+  - Create log correlation dashboards
+  - Integrate with Grafana for unified observability
+
+### Phase 6: GitOps (v2.0.0)
+
+- [ ] **GitOps with ArgoCD or Flux**: Declarative infrastructure management
+  - Deploy ArgoCD or Flux
+  - Migrate all manifests to Git-based deployment
+  - Implement automated sync and drift detection
+  - Establish proper RBAC and audit trails
+
+### Architecture Notes
+
+- **No Nomad**: Nomad is excluded as it's redundant with Kubernetes for orchestration
+- **Vault Storage**: Using Integrated Storage (Raft) instead of deprecated Consul backend
+- **Consul Role**: Service mesh and enhanced discovery, not as Vault storage
+- **TLS Independence**: cert-manager provides TLS without requiring Vault first
 
 ## 🤝 Contributing
 
@@ -332,7 +382,7 @@ For issues or questions:
 
 ## 🏷️ Version
 
-**Current Version**: v1.0.0 - Kubernetes Infrastructure Foundation
+**Current Version**: v1.0.0.1 - Updated Roadmap
 
 **Last Updated**: November 8, 2025
 
