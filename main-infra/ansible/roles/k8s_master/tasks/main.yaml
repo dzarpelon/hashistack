@@ -116,11 +116,31 @@
         replace: '\1initialDelaySeconds: 15'
       when: not k8s_master_admin_conf.stat.exists
 
+    - name: Install Calico CNI
+      ansible.builtin.command: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: calico_install
+      changed_when: "'created' in calico_install.stdout or 'configured' in calico_install.stdout"
+      when: not k8s_master_admin_conf.stat.exists
+
+    - name: Wait for Calico pods to be ready
+      ansible.builtin.command: kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: calico_ready
+      until: calico_ready.rc == 0
+      retries: 3
+      delay: 10
+      changed_when: false
+      when: not k8s_master_admin_conf.stat.exists
+
     - name: Display master node configuration
       ansible.builtin.debug:
         msg: |
           Master node ({{ inventory_hostname }}) is configured to run pods.
           All taints have been removed from the control plane.
+          Calico CNI has been installed and is ready.
 
     - name: Fetch kubeconfig to local machine
       ansible.builtin.fetch:
