@@ -6,6 +6,7 @@ metadata:
   namespace: longhorn-system
   annotations:
     external-dns.alpha.kubernetes.io/hostname: longhorn.lab.dzarpelon.com
+    traefik.ingress.kubernetes.io/router.middlewares: longhorn-system-longhorn-auth@kubernetescrd
 spec:
   rules:
     - host: longhorn.lab.dzarpelon.com

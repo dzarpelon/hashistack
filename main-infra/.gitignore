@@ -1,0 +1,18 @@
+# Ansible secrets
+ansible/group_vars/all/secrets.yaml
+
+# Ansible retry files
+*.retry
+
+# Ansible galaxy
+.galaxy_install_info
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# kubeconfig files (if copied locally)
+*.kubeconfig
+admin.conf

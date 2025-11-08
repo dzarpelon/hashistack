@@ -90,6 +90,120 @@
   delegate_to: localhost
   become: false
 
+# Dashboard Authentication Setup
+- name: Check if htpasswd command is available
+  ansible.builtin.command: which htpasswd
+  register: k8s_traefik_htpasswd_check
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  failed_when: false
+
+- name: Generate htpasswd hash using htpasswd command
+  ansible.builtin.shell: |
+    htpasswd -nbB {{ dashboard_admin_user }} '{{ dashboard_admin_password }}' | base64
+  register: k8s_traefik_htpasswd
+  delegate_to: localhost
+  become: false
+  no_log: true
+  changed_when: false
+  when: k8s_traefik_htpasswd_check.rc == 0
+
+- name: Generate htpasswd hash using Python (fallback)
+  ansible.builtin.shell: |
+    python3 -c "
+    import subprocess
+    import base64
+    # Use openssl for bcrypt hash
+    result = subprocess.run(['openssl', 'passwd', '-apr1', '{{ dashboard_admin_password }}'], 
+                          capture_output=True, text=True)
+    hash = result.stdout.strip()
+    htpasswd_line = '{{ dashboard_admin_user }}:' + hash
+    encoded = base64.b64encode(htpasswd_line.encode()).decode()
+    print(encoded)
+    "
+  register: k8s_traefik_htpasswd_python
+  delegate_to: localhost
+  become: false
+  no_log: true
+  changed_when: false
+  when: k8s_traefik_htpasswd_check.rc != 0
+
+- name: Set htpasswd variable
+  ansible.builtin.set_fact:
+    k8s_traefik_htpasswd_final: "{{ k8s_traefik_htpasswd.stdout if k8s_traefik_htpasswd_check.rc == 0 else k8s_traefik_htpasswd_python.stdout }}"
+  no_log: true
+
+- name: Create Traefik dashboard auth Secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: traefik-dashboard-auth
+        namespace: traefik-system
+      type: Opaque
+      data:
+        users: "{{ k8s_traefik_htpasswd_final }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Apply Traefik dashboard auth Middleware
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ playbook_dir }}/../../manifests/ingress/traefik-dashboard-auth-middleware.yaml"
+  delegate_to: localhost
+  become: false
+
+- name: Update Traefik IngressRoute to use authentication
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: traefik.io/v1alpha1
+      kind: IngressRoute
+      metadata:
+        name: dashboard
+        namespace: traefik-system
+      spec:
+        entryPoints:
+          - web
+        routes:
+          - match: Host(`traefik.lab.dzarpelon.com`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
+            kind: Rule
+            middlewares:
+              - name: dashboard-auth
+                namespace: traefik-system
+            services:
+              - name: api@internal
+                kind: TraefikService
+  delegate_to: localhost
+  become: false
+
+- name: Create Longhorn dashboard auth Secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: longhorn-dashboard-auth
+        namespace: longhorn-system
+      type: Opaque
+      data:
+        users: "{{ k8s_traefik_htpasswd_final }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Apply Longhorn dashboard auth Middleware
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ playbook_dir }}/../../manifests/ingress/longhorn-dashboard-auth-middleware.yaml"
+  delegate_to: localhost
+  become: false
+
 - name: Apply Longhorn dashboard Ingress
   kubernetes.core.k8s:
     state: present
@@ -103,8 +217,12 @@
       Traefik Ingress Controller has been installed successfully!
 
       LoadBalancer IP: {{ k8s_traefik_svc.resources[0].status.loadBalancer.ingress[0].ip }}
-      Dashboard URL: http://traefik.lab.dzarpelon.com
+      Dashboard URL: http://traefik.lab.dzarpelon.com/dashboard/
       Longhorn Dashboard URL: http://longhorn.lab.dzarpelon.com
+
+      Dashboard Authentication:
+        Username: {{ dashboard_admin_user }}
+        Password: (see ansible/group_vars/all/secrets.yaml)
 
       Traefik is ready to handle Ingress resources!
 

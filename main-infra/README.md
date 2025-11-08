@@ -90,6 +90,35 @@ The automation includes pre-configured Ingress resources for:
    echo "port 30053" | sudo tee -a /etc/resolver/lab.dzarpelon.com
    ```
 
+## Configuration
+
+### Dashboard Authentication
+
+The automation secures dashboard access with basic authentication. Before deployment, configure credentials:
+
+1. **Copy the example secrets file**:
+
+   ```bash
+   cd main-infra/ansible/group_vars/all
+   cp secrets.yaml.example secrets.yaml
+   ```
+
+2. **Edit credentials** in `secrets.yaml`:
+
+   ```yaml
+   dashboard_admin_user: admin
+   dashboard_admin_password: YOUR_SECURE_PASSWORD
+   ```
+
+3. **The secrets.yaml file is gitignored** and will not be committed to version control
+
+**Protected Dashboards**:
+
+- Traefik Dashboard: `http://traefik.lab.dzarpelon.com/dashboard/`
+- Longhorn Dashboard: `http://longhorn.lab.dzarpelon.com/`
+
+Both use the same credentials configured in `secrets.yaml`.
+
 ## Deployment
 
 ### Deploy Complete Environment
@@ -164,10 +193,36 @@ kubectl get ingress -A
 # Test DNS resolution
 dig @192.168.100.101 -p 30053 traefik.lab.dzarpelon.com
 dig @192.168.100.101 -p 30053 longhorn.lab.dzarpelon.com
+```
 
-# Access dashboards (from a machine with DNS configured)
-curl http://traefik.lab.dzarpelon.com/dashboard/
-curl http://longhorn.lab.dzarpelon.com/
+### Access Protected Dashboards
+
+Both dashboards are protected with basic authentication. Use the credentials configured in `ansible/group_vars/all/secrets.yaml`.
+
+```bash
+# Test authentication (should return 401 Unauthorized)
+curl -i http://traefik.lab.dzarpelon.com/dashboard/
+curl -i http://longhorn.lab.dzarpelon.com/
+
+# Access with credentials
+curl -u admin:'YOUR_PASSWORD' http://traefik.lab.dzarpelon.com/dashboard/
+curl -u admin:'YOUR_PASSWORD' http://longhorn.lab.dzarpelon.com/
+
+# Or open in browser and enter credentials when prompted:
+# - Traefik Dashboard: http://traefik.lab.dzarpelon.com/dashboard/
+# - Longhorn Dashboard: http://longhorn.lab.dzarpelon.com/
+```
+
+**Verify authentication resources:**
+
+```bash
+# Check Traefik auth
+kubectl get secret -n traefik-system traefik-dashboard-auth
+kubectl get middleware -n traefik-system dashboard-auth
+
+# Check Longhorn auth
+kubectl get secret -n longhorn-system longhorn-dashboard-auth
+kubectl get middleware -n longhorn-system longhorn-auth
 ```
 
 ## Destroying the Environment
@@ -233,6 +288,24 @@ spec:
 - **Traefik**: Edit `ansible/roles/k8s_traefik/tasks/main.yaml` → `deployment.replicas`
 - **CoreDNS**: Edit `manifests/dns/coredns.yaml` → `spec.replicas`
 
+### Changing Dashboard Credentials
+
+Edit `ansible/group_vars/all/secrets.yaml` and update:
+
+```yaml
+dashboard_admin_user: your_username
+dashboard_admin_password: your_secure_password
+```
+
+Then redeploy authentication:
+
+```bash
+cd main-infra
+ansible-playbook ansible/playbooks/k8s-cluster.yaml \
+  --limit k8s-master.lab.dzarpelon.com \
+  --start-at-task="Deploy Traefik Ingress Controller"
+```
+
 ## Troubleshooting
 
 ### Pods not getting IPs
@@ -256,6 +329,28 @@ spec:
 - Access with trailing slash: `http://traefik.lab.dzarpelon.com/dashboard/`
 - Or use Host header: `curl -H "Host: traefik.lab.dzarpelon.com" http://<TRAEFIK-IP>/dashboard/`
 
+### Dashboard authentication not working
+
+Verify secrets exist:
+
+```bash
+kubectl get secret -n traefik-system traefik-dashboard-auth
+kubectl get secret -n longhorn-system longhorn-dashboard-auth
+```
+
+Check middleware resources:
+
+```bash
+kubectl get middleware -n traefik-system dashboard-auth
+kubectl get middleware -n longhorn-system longhorn-auth
+```
+
+Verify htpasswd format in secret:
+
+```bash
+kubectl get secret -n traefik-system traefik-dashboard-auth -o jsonpath='{.data.users}' | base64 -d
+```
+
 ## Architecture Decisions
 
 ### Why these components?
@@ -267,6 +362,8 @@ spec:
 3. **Custom DNS Stack**: Allows automatic DNS for services without external DNS providers; etcd backend provides consistency; External-DNS enables GitOps-friendly DNS management
 
 4. **Traefik**: Modern, cloud-native ingress with excellent Kubernetes integration; lighter than NGINX Ingress; supports both standard Ingress and custom CRDs; built-in dashboard
+
+5. **Basic Auth for Dashboards**: Simple, secure authentication without additional infrastructure; credentials managed via Ansible variables; htpasswd format compatible with all web browsers
 
 ### Deployment Order
 
@@ -282,7 +379,7 @@ The order is critical for dependencies:
 
 ## Files Structure
 
-```
+```text
 main-infra/
 ├── ansible.cfg                          # Ansible configuration
 ├── ansible/
