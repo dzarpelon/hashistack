@@ -82,7 +82,15 @@ hashistack/
 - **Features**: HTTP/HTTPS routing, dashboard, automatic service discovery
 - **Dashboard**: http://traefik.lab.dzarpelon.com/dashboard/ (authenticated)
 
-### 6. Dashboard Authentication
+### 6. cert-manager
+
+- **Version**: v1.19.1
+- **Deployment**: Helm chart, 2 replicas
+- **Features**: Automated TLS certificate management, Let's Encrypt integration
+- **ClusterIssuers**: Staging and Production (ACME DNS-01 via Cloudflare)
+- **Certificates**: Wildcard cert for *.lab.dzarpelon.com
+
+### 7. Dashboard Authentication
 
 - **Method**: HTTP Basic Auth (htpasswd)
 - **Protected Dashboards**: Traefik, Longhorn
@@ -303,13 +311,13 @@ The automation follows a specific order for dependencies:
 
 The following enhancements are planned in priority order:
 
-### Phase 1: Security (v1.1.0)
+### Phase 1: Security (v1.1.0) ✅ COMPLETED
 
-- [ ] **TLS/HTTPS with cert-manager**: Implement automated certificate management
-  - Install cert-manager
-  - Configure Let's Encrypt or self-signed CA for lab environment
-  - Update Traefik IngressRoutes for HTTPS
-  - Secure all dashboards (Traefik, Longhorn)
+- [x] **TLS/HTTPS with cert-manager**: Implement automated certificate management
+  - Install cert-manager v1.19.1
+  - Configure Let's Encrypt with Cloudflare DNS-01 challenge
+  - Deploy wildcard certificates for *.lab.dzarpelon.com
+  - Secure all dashboards (Traefik, Longhorn) with HTTPS
 
 ### Phase 2: Observability (v1.2.0)
 
@@ -382,9 +390,9 @@ For issues or questions:
 
 ## 🏷️ Version
 
-**Current Version**: v1.0.0.1 - Updated Roadmap
+**Current Version**: v1.1.0 - TLS/HTTPS with cert-manager
 
-**Last Updated**: November 8, 2025
+**Last Updated**: November 9, 2025
 
 ---
 
