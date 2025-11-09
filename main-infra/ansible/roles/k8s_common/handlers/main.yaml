@@ -1,5 +1,5 @@
 ---
-- name: Restart kubelet if running
+- name: restart kubelet if running
   ansible.builtin.systemd:
     name: kubelet
     state: restarted

@@ -79,6 +79,11 @@
         state: stopped
         enabled: false
 
+    - name: Check if kubelet is installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+      register: k8s_common_kubelet_conf_check
+
     - name: Disable IPv6 (prevents kubelet IPv6 bracket notation bug)
       ansible.builtin.sysctl:
         name: "{{ item }}"
