@@ -144,7 +144,7 @@
       retries: 3
       delay: 10
       register: k8s_common_crio_install_result
-      until: crio_install_result is succeeded
+      until: k8s_common_crio_install_result is succeeded
 
     - name: Configure CRI-O to use systemd cgroup
       ansible.builtin.copy:

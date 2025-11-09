@@ -79,6 +79,11 @@
         name: k8s_traefik
       when: k8s_state | default('present') == 'present'
 
+    - name: Deploy cert-manager for TLS certificates
+      ansible.builtin.include_role:
+        name: k8s_certmanager
+      when: k8s_state | default('present') == 'present'
+
 - name: Configure DNS resolution on all nodes
   hosts: k8s
   become: true

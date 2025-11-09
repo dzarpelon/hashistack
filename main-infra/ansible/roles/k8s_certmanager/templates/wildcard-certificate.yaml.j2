@@ -1,0 +1,21 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lab-wildcard-tls
+  namespace: traefik-system
+spec:
+  # Secret name where certificate will be stored
+  secretName: lab-wildcard-tls
+  # Certificate issuer reference
+  issuerRef:
+    name: {{ 'letsencrypt-staging' if k8s_certmanager_use_staging else 'letsencrypt-prod' }}
+    kind: ClusterIssuer
+  # Domains covered by this certificate
+  dnsNames:
+{% for domain in k8s_certmanager_wildcard_domains %}
+  - "{{ domain }}"
+{% endfor %}
+  # Certificate duration and renewal
+  duration: {{ k8s_certmanager_cert_duration }}
+  renewBefore: {{ k8s_certmanager_cert_renew_before }}
