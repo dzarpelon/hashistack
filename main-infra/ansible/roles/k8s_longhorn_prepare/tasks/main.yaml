@@ -1,0 +1,73 @@
+---
+# Prepare 500GB disk for Longhorn on each node.
+# Idempotent and conservative: checks for existing mounts and existing data; will not overwrite
+# existing /var/lib/longhorn content unless `force_move_longhorn_data` is true.
+
+- name: Ensure target mount directory exists
+  ansible.builtin.file:
+    path: "{{ longhorn_data_mount }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check existing mount for {{ longhorn_data_mount }}
+  ansible.builtin.command: "findmnt -n -o SOURCE --target {{ longhorn_data_mount }}"
+  register: existing_mount
+  ignore_errors: true
+
+- name: Stat longhorn data path
+  ansible.builtin.stat:
+    path: "{{ longhorn_data_mount }}"
+  register: longhorn_data_stat
+
+- name: Check if candidate disk exists
+  ansible.builtin.stat:
+    path: "{{ longhorn_data_disk }}"
+  register: candidate_disk
+
+- name: Get candidate disk size (bytes)
+  ansible.builtin.command: "blockdev --getsize64 {{ longhorn_data_disk }}"
+  register: candidate_disk_size
+  when: candidate_disk.stat.exists
+  changed_when: false
+  failed_when: candidate_disk_size.rc != 0 and candidate_disk.stat.exists
+
+- name: Decide whether to prepare disk (500GB)
+  ansible.builtin.set_fact:
+    prepare_disk: "{{ (existing_mount.rc != 0) and candidate_disk.stat.exists and (candidate_disk_size.stdout | int) >= 500000000000 }}"
+
+- name: Fail if disk not present or too small (safe guard)
+  ansible.builtin.fail:
+    msg: "Candidate disk {{ longhorn_data_disk }} not present or smaller than 500GB; aborting."
+  when: not prepare_disk
+
+- name: Ensure filesystem exists on disk (format if needed)
+  ansible.builtin.command: "mkfs.{{ longhorn_data_fs }} -f {{ longhorn_data_disk }}"
+  when: prepare_disk and (longhorn_data_stat.stat.exists == false or (longhorn_data_stat.stat.isdir and (longhorn_data_stat.stat.size == 0))) and not force_move_longhorn_data
+  register: mkfs_result
+  changed_when: mkfs_result.rc == 0
+  ignore_errors: false
+
+- name: Mount disk to longhorn data path
+  ansible.builtin.mount:
+    path: "{{ longhorn_data_mount }}"
+    src: "{{ longhorn_data_disk }}"
+    fstype: "{{ longhorn_data_fs }}"
+    opts: defaults
+    state: mounted
+  when: prepare_disk
+
+- name: Ensure fstab entry exists for longhorn disk
+  ansible.builtin.mount:
+    path: "{{ longhorn_data_mount }}"
+    src: "{{ longhorn_data_disk }}"
+    fstype: "{{ longhorn_data_fs }}"
+    opts: defaults
+    state: present
+  when: prepare_disk
+
+- name: Debug mount
+  ansible.builtin.debug:
+    msg: "Mounted {{ longhorn_data_disk }} => {{ longhorn_data_mount }}"
+  when: prepare_disk

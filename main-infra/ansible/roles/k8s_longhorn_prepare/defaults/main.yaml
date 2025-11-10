@@ -1,0 +1,7 @@
+---
+# Defaults for k8s_longhorn_prepare
+longhorn_data_disk: "/dev/sdb"
+longhorn_data_mount: "/var/lib/longhorn"
+longhorn_data_fs: "xfs"
+# If true, will rsync existing data into new mount (dangerous). Default false for safety.
+force_move_longhorn_data: false

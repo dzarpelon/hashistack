@@ -1,0 +1,224 @@
+---
+# Example Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-app
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: example-app
+  template:
+    metadata:
+      labels:
+        app: example-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+
+---
+# Service for the application
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-app
+  namespace: default
+spec:
+  selector:
+    app: example-app
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# Method 1: Using Kubernetes Ingress (Standard)
+# Traefik will automatically detect this and create routes
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: example-app-ingress
+  namespace: default
+  annotations:
+    # Automatically register DNS with External-DNS
+    external-dns.alpha.kubernetes.io/hostname: example.lab.dzarpelon.com
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts:
+    - example.lab.dzarpelon.com
+    # Use the wildcard certificate created by cert-manager
+    # This secret should exist in the same namespace
+    secretName: lab-wildcard-tls
+  rules:
+  - host: example.lab.dzarpelon.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: example-app
+            port:
+              number: 80
+
+---
+# Method 2: Using Traefik IngressRoute (Traefik-specific, more features)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: example-app-ingressroute
+  namespace: default
+  annotations:
+    # Automatically register DNS
+    external-dns.alpha.kubernetes.io/hostname: example2.lab.dzarpelon.com
+spec:
+  entryPoints:
+  - websecure  # HTTPS entry point (port 443)
+  routes:
+  - match: Host(`example2.lab.dzarpelon.com`)
+    kind: Rule
+    services:
+    - name: example-app
+      port: 80
+  tls:
+    # Use the wildcard certificate
+    secretName: lab-wildcard-tls
+
+---
+# Method 3: IngressRoute with HTTP to HTTPS redirect
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: default
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: example-app-http
+  namespace: default
+spec:
+  entryPoints:
+  - web  # HTTP entry point (port 80)
+  routes:
+  - match: Host(`example3.lab.dzarpelon.com`)
+    kind: Rule
+    middlewares:
+    - name: redirect-https
+    services:
+    - name: example-app
+      port: 80
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: example-app-https
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: example3.lab.dzarpelon.com
+spec:
+  entryPoints:
+  - websecure
+  routes:
+  - match: Host(`example3.lab.dzarpelon.com`)
+    kind: Rule
+    services:
+    - name: example-app
+      port: 80
+  tls:
+    secretName: lab-wildcard-tls
+
+---
+# Method 4: Using a dedicated certificate (not wildcard)
+# First, create a Certificate resource
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: example-dedicated-cert
+  namespace: default
+spec:
+  secretName: example-dedicated-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - example4.lab.dzarpelon.com
+  duration: 2160h  # 90 days
+  renewBefore: 720h  # 30 days
+
+---
+# Then use it in the IngressRoute
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: example-app-dedicated-cert
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: example4.lab.dzarpelon.com
+spec:
+  entryPoints:
+  - websecure
+  routes:
+  - match: Host(`example4.lab.dzarpelon.com`)
+    kind: Rule
+    services:
+    - name: example-app
+      port: 80
+  tls:
+    secretName: example-dedicated-tls
+
+---
+# Method 5: With Basic Authentication + HTTPS
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: basic-auth
+  namespace: default
+spec:
+  basicAuth:
+    secret: basic-auth-credentials
+
+---
+# Create the basic auth secret
+# htpasswd -nb admin password | base64
+apiVersion: v1
+kind: Secret
+metadata:
+  name: basic-auth-credentials
+  namespace: default
+type: Opaque
+data:
+  users: YWRtaW46JGFwcjEkSDY1dnVKSlMkLnhSZXoyQUNnZE9rQzJGbGFQSFBDLwo=  # admin:password
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: example-app-auth
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: secure.lab.dzarpelon.com
+spec:
+  entryPoints:
+  - websecure
+  routes:
+  - match: Host(`secure.lab.dzarpelon.com`)
+    kind: Rule
+    middlewares:
+    - name: basic-auth
+    services:
+    - name: example-app
+      port: 80
+  tls:
+    secretName: lab-wildcard-tls
